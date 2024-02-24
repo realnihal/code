@@ -222,12 +222,38 @@ export const run = async (events: any[]) => {
       // TODO: Business Impact for Bugs
 
       if (inferredCategory === 'bug') {
-        bugCounter++;
+        let llmBugResponse = {};
+        const reviewBugText = `Summary: ${reviewSummary}\n\nReason: ${reviewReason}\n\nBug text: ${review.text}`;
+        const reviewBugTitle = review.title || `Ticket created from Playstore review ${review.url}`;
+        const systemBugPrompt = `You are an expert at understanding the business impact of a bug. You are given a review provided by a user for the app ${inputs['app_id']}. The output should be a JSON with fields "impact" and "severity". The "impact" field should have a explanation in under 40 words. The "severity" field should be a single number between 0 and 10. \n\nReview: {review}\n\nOutput:`;
+        const humanBugPrompt = '';
+        try {
+          llmSpamResponse = await llmUtil.chatCompletion(systemBugPrompt, humanBugPrompt, {
+            review: reviewBugTitle ? reviewBugTitle + '\n' + reviewBugText : reviewBugText,
+          });
+          console.log(`LLM Response: ${JSON.stringify(llmSpamResponse)}`);
+        } catch (err) {
+          console.error(`Error while calling LLM: ${err}`);
+        }
+
+        let bugImpact = '';
+        let bugSeverity = 0;
+        if ('impact' in llmBugResponse) {
+          bugImpact = llmBugResponse['impact'] as string;
+        }
+        try {
+          if ('severity' in llmBugResponse) {
+            bugSeverity = llmBugResponse['severity'] as number;
+          }
+        } catch (err) {
+          console.error(`Error while Parsing Severity: ${err}`);
+        }
+
         // Create a ticket with title as review title and description as review text.
         const createTicketResp = await apiUtil.createTicket({
           title: reviewTitle,
           tags: [{ id: tags[inferredCategory].id }],
-          body: reviewText,
+          body: reviewText + '\n\n' + bugImpact + '\n\n Bug severity: ' + bugSeverity.toString(),
           type: publicSDK.WorkType.Ticket,
           owned_by: [inputs['default_owner_id']],
           applies_to_part: inputs['default_part_id'],
@@ -236,8 +262,20 @@ export const run = async (events: any[]) => {
           console.error(`Error while creating ticket: ${createTicketResp.message}`);
           continue;
         }
-        continue;
+        // Post a message with ticket ID.
+        const ticketID = createTicketResp.data.work.id;
+        const ticketCreatedMessage = `Created ticket: <${ticketID}> and it is categorized as ${inferredCategory}`;
+        const postTicketResp: HTTPResponse = await apiUtil.postTextMessageWithVisibilityTimeout(
+          snapInId,
+          ticketCreatedMessage,
+          1
+        );
+        if (!postTicketResp.success) {
+          console.error(`Error while creating timeline entry: ${postTicketResp.message}`);
+          continue;
+        }
       }
+      continue;
 
       // TODO: Duplicates should be avoided.
 
@@ -252,35 +290,6 @@ export const run = async (events: any[]) => {
       // TODO: Identifying customer knowledge gaps.
 
       // TODO: Sentiment trend analysis for all feedback
-
-      // Create a ticket with title as review title and description as review text.
-      const createTicketResp = await apiUtil.createTicket({
-        title: reviewTitle,
-        tags: [{ id: tags[inferredCategory].id }],
-        body: reviewText,
-        type: publicSDK.WorkType.Ticket,
-        owned_by: [inputs['default_owner_id']],
-        applies_to_part: inputs['default_part_id'],
-      });
-      if (!createTicketResp.success) {
-        console.error(`Error while creating ticket: ${createTicketResp.message}`);
-        continue;
-      }
-      // Post a message with ticket ID.
-      const ticketID = createTicketResp.data.work.id;
-      const ticketCreatedMessage =
-        inferredCategory != 'failed_to_infer_category'
-          ? `Created ticket: <${ticketID}> and it is categorized as ${inferredCategory}`
-          : `Created ticket: <${ticketID}> and it failed to be categorized`;
-      const postTicketResp: HTTPResponse = await apiUtil.postTextMessageWithVisibilityTimeout(
-        snapInId,
-        ticketCreatedMessage,
-        1
-      );
-      if (!postTicketResp.success) {
-        console.error(`Error while creating timeline entry: ${postTicketResp.message}`);
-        continue;
-      }
     }
     // postResp the counters
     postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
