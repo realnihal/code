@@ -113,4 +113,24 @@ export class ApiUtils {
     const createTimelineResponse: HTTPResponse = await this.createTimeLine(createPayload);
     return createTimelineResponse;
   }
+
+  async askSentiment(message: string, rapidApiKey: string) {
+    const encodedMessage = encodeURIComponent(message);
+    const url = `https://twinword-sentiment-analysis.p.rapidapi.com/analyze/?text=${encodedMessage}`;
+    const options = {
+      method: 'GET',
+      headers: {
+        'X-RapidAPI-Key': rapidApiKey,
+        'X-RapidAPI-Host': 'twinword-sentiment-analysis.p.rapidapi.com',
+      },
+    };
+
+    try {
+      const response = await fetch(url, options);
+      const result = await response.text();
+      return JSON.parse(result);
+    } catch (error) {
+      console.error(error);
+    }
+  }
 }

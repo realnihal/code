@@ -8,6 +8,7 @@ export const run = async (events: any[]) => {
     const endpoint: string = event.execution_metadata.devrev_endpoint;
     const token: string = event.context.secrets.service_account_token;
     const fireWorksApiKey: string = event.input_data.keyrings.fireworks_api_key;
+    const rapidApiKey: string = event.input_data.keyrings.rapid_api_key;
     const apiUtil: ApiUtils = new ApiUtils(endpoint, token);
     // Get the number of reviews to fetch from command args.
     const snapInId = event.context.snap_in_id;
@@ -21,6 +22,7 @@ export const run = async (events: any[]) => {
       `accounts/fireworks/models/${inputs['llm_model_to_use']}`,
       200
     );
+    const llmUtil2: LLMUtils = new LLMUtils(fireWorksApiKey, `accounts/fireworks/models/llamaguard-7b`, 200);
     let numReviews = 10;
     let commentID: string | undefined;
     if (parameters === 'help') {
@@ -116,10 +118,10 @@ export const run = async (events: any[]) => {
       let llmSpamResponse = {};
       const reviewSpamText = `Ticket created from Playstore review ${review.url}\n\n${review.text}`;
       const reviewSpamTitle = review.title || `Ticket created from Playstore review ${review.url}`;
-      const systemSpamPrompt = `You are an expert at Identifying Spam in Playstore Reviews. You are given a review provided by a user for the app ${inputs['app_id']}. You have to label the review as spam, nsfw or notspam. The output should be a JSON with fields "category" and "reason". The "category" field should be one of 'spam', 'nsfw' or 'notspam'. The 'reason' field should be a string explaining the reason for the category. \n\nReview: {review}\n\nOutput:`;
+      const systemSpamPrompt = `You are an expert at Identifying Spam and NSFW reviews among Playstore Reviews. You are given a review provided by a user for the app ${inputs['app_id']}. You have to label the review as spam, nsfw or notspam. The output should be a JSON with fields "category" and "reason". The "category" field should be one of 'spam', 'nsfw' or 'notspam'. The 'reason' field should be a string explaining the reason for the category. \n\nReview: {review}\n\nOutput:`;
       const humanSpamPrompt = '';
       try {
-        llmSpamResponse = await llmUtil.chatCompletion(systemSpamPrompt, humanSpamPrompt, {
+        llmSpamResponse = await llmUtil2.chatCompletion(systemSpamPrompt, humanSpamPrompt, {
           review: reviewSpamTitle ? reviewSpamTitle + '\n' + reviewSpamText : reviewSpamText,
         });
         console.log(`LLM Response: ${JSON.stringify(llmSpamResponse)}`);
@@ -217,8 +219,6 @@ export const run = async (events: any[]) => {
 
       // TODO: Duplicates should be avoided.
 
-      // TODO: Pipeline for ticket creation.
-
       // TODO: Business Impact for Bugs
 
       if (inferredCategory === 'bug') {
@@ -231,7 +231,7 @@ export const run = async (events: any[]) => {
           llmSpamResponse = await llmUtil.chatCompletion(systemBugPrompt, humanBugPrompt, {
             review: reviewBugTitle ? reviewBugTitle + '\n' + reviewBugText : reviewBugText,
           });
-          console.log(`LLM Response: ${JSON.stringify(llmSpamResponse)}`);
+          console.log(`LLM Response: ${JSON.stringify(llmBugResponse)}`);
         } catch (err) {
           console.error(`Error while calling LLM: ${err}`);
         }
@@ -274,23 +274,117 @@ export const run = async (events: any[]) => {
           console.error(`Error while creating timeline entry: ${postTicketResp.message}`);
           continue;
         }
+        continue;
       }
-      continue;
 
-      // TODO: Duplicates should be avoided.
+      // TODO: Business impact for feature_request
+
+      if (inferredCategory === 'feature_request') {
+        let llmFeatureResponse = {};
+        const reviewFeatureText = `Summary: ${reviewSummary}\n\nReason: ${reviewReason}\n\nFeature request: ${review.text}`;
+        const reviewFeatureTitle = review.title || `Ticket created from Playstore review ${review.url}`;
+        const systemFeaturePrompt = `You are an expert at understanding the business impact of a feature request. You are given a review provided by a user for the app ${inputs['app_id']}. The output should be a JSON with fields "impact" and "severity". The "impact" field should have a explanation in under 40 words. The "severity" field should be a single number between 0 and 10. \n\nReview: {review}\n\nOutput:`;
+        const humanFeaturePrompt = '';
+        try {
+          llmFeatureResponse = await llmUtil.chatCompletion(systemFeaturePrompt, humanFeaturePrompt, {
+            review: reviewFeatureTitle ? reviewFeatureTitle + '\n' + reviewFeatureText : reviewFeatureText,
+          });
+          console.log(`LLM Response: ${JSON.stringify(llmFeatureResponse)}`);
+        } catch (err) {
+          console.error(`Error while calling LLM: ${err}`);
+        }
+
+        let featureImpact = '';
+        let featureSeverity = 0;
+        if ('impact' in llmFeatureResponse) {
+          featureImpact = llmFeatureResponse['impact'] as string;
+        }
+        try {
+          if ('severity' in llmFeatureResponse) {
+            featureSeverity = llmFeatureResponse['severity'] as number;
+          }
+        } catch (err) {
+          console.error(`Error while Parsing Severity: ${err}`);
+        }
+
+        // Create a ticket with title as review title and description as review text.
+        const createTicketResp = await apiUtil.createTicket({
+          title: reviewTitle,
+          tags: [{ id: tags[inferredCategory].id }],
+          body: reviewText + '\n\n' + featureImpact + '\n\n Bug severity: ' + featureSeverity.toString(),
+          type: publicSDK.WorkType.Ticket,
+          owned_by: [inputs['default_owner_id']],
+          applies_to_part: inputs['default_part_id'],
+        });
+        if (!createTicketResp.success) {
+          console.error(`Error while creating ticket: ${createTicketResp.message}`);
+          continue;
+        }
+        // Post a message with ticket ID.
+        const ticketID = createTicketResp.data.work.id;
+        const ticketCreatedMessage = `Created ticket: <${ticketID}> and it is categorized as ${inferredCategory}`;
+        const postTicketResp: HTTPResponse = await apiUtil.postTextMessageWithVisibilityTimeout(
+          snapInId,
+          ticketCreatedMessage,
+          1
+        );
+        if (!postTicketResp.success) {
+          console.error(`Error while creating timeline entry: ${postTicketResp.message}`);
+          continue;
+        }
+        continue;
+      }
 
       // TODO: Sentiment analysis for feedback ticket.
 
-      // TODO: Business impact for features
+      if (inferredCategory === 'feedback') {
+        let llmFeedbackResponse = {};
+        try {
+          llmFeedbackResponse = await apiUtil.askSentiment(reviewText, rapidApiKey);
+        } catch (err) {
+          console.error(`Error while calling LLM: ${err}`);
+        }
 
-      // TODO: Best in each category
+        let feedbackSentiment = '';
+        if ('type' in llmFeedbackResponse) {
+          feedbackSentiment = llmFeedbackResponse['type'] as string;
+        }
 
-      // TODO: Severity for bugs, potential resolutions.
-
-      // TODO: Identifying customer knowledge gaps.
+        // Create a ticket with title as review title and description as review text.
+        const createTicketResp = await apiUtil.createTicket({
+          title: reviewTitle,
+          tags: [{ id: tags[inferredCategory].id }],
+          body: reviewText + '\n\n Feedback Sentiment: ' + feedbackSentiment.toString(),
+          type: publicSDK.WorkType.Ticket,
+          owned_by: [inputs['default_owner_id']],
+          applies_to_part: inputs['default_part_id'],
+        });
+        if (!createTicketResp.success) {
+          console.error(`Error while creating ticket: ${createTicketResp.message}`);
+          continue;
+        }
+        // Post a message with ticket ID.
+        const ticketID = createTicketResp.data.work.id;
+        const ticketCreatedMessage = `Created ticket: <${ticketID}> and it is categorized as ${inferredCategory}`;
+        const postTicketResp: HTTPResponse = await apiUtil.postTextMessageWithVisibilityTimeout(
+          snapInId,
+          ticketCreatedMessage,
+          1
+        );
+        if (!postTicketResp.success) {
+          console.error(`Error while creating timeline entry: ${postTicketResp.message}`);
+          continue;
+        }
+        continue;
+      }
 
       // TODO: Sentiment trend analysis for all feedback
     }
+
+    // TODO: Best in each category
+
+    // TODO: Identifying customer knowledge gaps.
+
     // postResp the counters
     postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
       snapInId,

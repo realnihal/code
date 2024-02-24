@@ -1,10 +1,6 @@
-import { StringOutputParser, JsonOutputParser } from "@langchain/core/output_parsers";
-import {
-  ChatPromptTemplate,
-  SystemMessagePromptTemplate,
-  HumanMessagePromptTemplate,
-} from "@langchain/core/prompts";
-import { ChatFireworks } from "@langchain/community/chat_models/fireworks";
+import { ChatFireworks } from '@langchain/community/chat_models/fireworks';
+import { JsonOutputParser, StringOutputParser } from '@langchain/core/output_parsers';
+import { ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate } from '@langchain/core/prompts';
 
 export class LLMUtils {
   public provider!: ChatFireworks;
