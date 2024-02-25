@@ -1,5 +1,5 @@
 import { publicSDK } from '@devrev/typescript-sdk';
-import * as gplay from 'google-play-scraper';
+// import * as gplay from 'google-play-scraper';
 import { LLMUtils } from './llm_utils';
 import { ApiUtils, HTTPResponse } from './utils';
 
@@ -27,7 +27,7 @@ export const run = async (events: any[]) => {
     let commentID: string | undefined;
     if (parameters === 'help') {
       // Send a help message in CLI help format.
-      const helpMessage = `playstore_reviews_process - Fetch reviews from Google Play Store and create tickets in DevRev.\n\nUsage: /playstore_reviews_process <number_of_reviews_to_fetch>\n\n\`number_of_reviews_to_fetch\`: Number of reviews to fetch from Google Playstore. Should be a number between 1 and 100. If not specified, it defaults to 10.`;
+      const helpMessage = `playstore_reviews_process - Fetch tweets from Twitter(X.com) and create tickets in DevRev.\n\nUsage: /process_twitter_tweets <number_of_tweets_to_fetch>\n\n\`number_of_tweets_to_fetch\`: Number of tweets to fetch from Twitter (X.com). Should be a number between 1 and 50. If not specified, it defaults to 10.`;
       let postResp = await apiUtil.postTextMessageWithVisibilityTimeout(snapInId, helpMessage, 1);
       if (!postResp.success) {
         console.error(`Error while creating timeline entry: ${postResp.message}`);
@@ -37,7 +37,7 @@ export const run = async (events: any[]) => {
     }
     let postResp: HTTPResponse = await apiUtil.postTextMessageWithVisibilityTimeout(
       snapInId,
-      'Fetching reviews from Playstore',
+      'Fetching tweets from Twitter(X.com). Please wait.',
       1
     );
     if (!postResp.success) {
@@ -48,7 +48,7 @@ export const run = async (events: any[]) => {
       // Default to 10 reviews.
       parameters = '10';
     }
-    postResp = await apiUtil.postTextMessageWithVisibilityTimeout(snapInId, `Helloooweoiwoeiwoie`, 1);
+    // postResp = await apiUtil.postTextMessageWithVisibilityTimeout(snapInId, `Helloooweoiwoeiwoie`, 1);
     try {
       numReviews = parseInt(parameters);
 
@@ -64,35 +64,42 @@ export const run = async (events: any[]) => {
       commentID = postResp.data.timeline_entry.id;
     }
     // Make sure number of reviews is <= 100.
-    if (numReviews > 100) {
-      postResp = await apiUtil.postTextMessage(snapInId, 'Please enter a number less than 100', commentID);
+    if (numReviews > 50) {
+      postResp = await apiUtil.postTextMessage(snapInId, 'Please enter a number less than 50', commentID);
       if (!postResp.success) {
         console.error(`Error while creating timeline entry: ${postResp.message}`);
         continue;
       }
       commentID = postResp.data.timeline_entry.id;
     }
-    // Call google playstore scraper to fetch those number of reviews.
-    let getReviewsResponse: any = await gplay.reviews({
-      appId: inputs['app_id'],
-      sort: gplay.sort.RATING,
-      num: numReviews,
-      throttle: 10,
-    });
+    // Get tweets from apiutil
+    const twitterData = await apiUtil.queryTwitter(inputs['hashtag'], numReviews, rapidApiKey, snapInId);
+
+    // check if the response is null
+    if (!twitterData) {
+      postResp = await apiUtil.postTextMessage(snapInId, 'No tweets found', commentID);
+      if (!postResp.success) {
+        console.error(`Error while creating timeline entry: ${postResp.message}`);
+        continue;
+      }
+      commentID = postResp.data.timeline_entry.id;
+      continue;
+    }
+
+    const tweetTexts: string[] = [];
+    const results = twitterData.results; // Assuming 'results' is the key containing tweet objects
+
     // Post an update about the number of reviews fetched.
     postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
       snapInId,
-      `Fetched ${numReviews} reviews, creating tickets now.`,
+      `Fetched ${numReviews} tweets, creating tickets now.`,
       1
     );
-
     if (!postResp.success) {
       console.error(`Error while creating timeline entry: ${postResp.message}`);
       continue;
     }
     commentID = postResp.data.timeline_entry.id;
-    let reviews: gplay.IReviewsItem[] = getReviewsResponse.data;
-    console.log(reviews[0]);
 
     //TODO: Counters
     let spamCounter = 0;
@@ -109,13 +116,17 @@ export const run = async (events: any[]) => {
     let featureRequestList: String[] = [];
 
     // For each review, create a ticket in DevRev. -----> LOOP START
-    for (const review of reviews) {
+    for (let i = 0; i < results.length; i++) {
+      let url = 'https://twitter.com/htTweets/status/' + results[i].tweet_id;
+      let text = results[i].text;
+      let title = 'Tweet from ' + results[i].user.username + ' using the hashtag ' + inputs['hashtag'];
+      let imageurl = '';
+      if (results.media_url.length > 0) {
+        imageurl = results.media_url.join;
+      }
+
       // Post a progress message saying creating ticket for review with review URL posted.
-      postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
-        snapInId,
-        `Creating ticket for review: ${review.url}`,
-        1
-      );
+      postResp = await apiUtil.postTextMessageWithVisibilityTimeout(snapInId, `Creating ticket for review: ${url}`, 1);
       if (!postResp.success) {
         console.error(`Error while creating timeline entry: ${postResp.message}`);
         continue;
@@ -123,13 +134,13 @@ export const run = async (events: any[]) => {
 
       // TODO: SPAM FILTERING
       let llmSpamResponse = {};
-      const reviewSpamText = `Ticket created from Playstore review ${review.url}\n\n${review.text}`;
-      const reviewSpamTitle = review.title || `Ticket created from Playstore review ${review.url}`;
+      const reviewSpamText = `Ticket created from X tweet ${url}\n\n${text}`;
+      // const reviewSpamTitle = review.title || `Ticket created from X tweet ${url}`;
       const systemSpamPrompt = `You are an expert at Identifying Spam and NSFW reviews among Playstore Reviews. You are given a review provided by a user for the app ${inputs['app_id']}. You have to label the review as spam, nsfw or notspam. The output should be a JSON with fields "category" and "reason". The "category" field should be one of 'spam', 'nsfw' or 'notspam'. The 'reason' field should be a string explaining the reason for the category. \n\nReview: {review}\n\nOutput:`;
       const humanSpamPrompt = '';
       try {
         llmSpamResponse = await llmUtil2.chatCompletion(systemSpamPrompt, humanSpamPrompt, {
-          review: reviewSpamTitle ? reviewSpamTitle + '\n' + reviewSpamText : reviewSpamText,
+          review: reviewSpamText ? reviewSpamText : 'No review found',
         });
         console.log(`LLM Response: ${JSON.stringify(llmSpamResponse)}`);
       } catch (err) {
@@ -172,16 +183,16 @@ export const run = async (events: any[]) => {
 
       // TODO: Identify computer generated reviews
 
-      const reviewText = `Ticket created from Playstore review ${review.url}\n\n${review.text}`;
-      const reviewTitle = review.title || `Ticket created from Playstore review ${review.url}`;
-      const reviewID = review.id;
+      const reviewText = `Ticket created from Twitter tweet review ${url}\n\n${text}`;
+      // const reviewTitle = review.title || `Ticket created from Playstore review ${url}`;
+      // const reviewID = review.id;
       const systemPrompt = `You are an expert at labelling a given Google Play Store Review as bug, feature_request, question or feedback. You are given a review provided by a user for the app ${inputs['app_id']}. You have to label the review as bug, feature_request, question or feedback. The output should be a JSON with fields "category", "summary" and "reason". The "category" field should be one of "bug", "feature_request", "question" or "feedback". The "summary" field should be a string summarizing the reviewin 20 words. The "reason" field should be a string explaining the reason for the category. \n\nReview: {review}\n\nOutput:`;
       const humanPrompt = ``;
 
       let llmResponse = {};
       try {
         llmResponse = await llmUtil.chatCompletion(systemPrompt, humanPrompt, {
-          review: reviewTitle ? reviewTitle + '\n' + reviewText : reviewText,
+          review: reviewText ? reviewText : 'No review found',
         });
       } catch (err) {
         console.error(`Error while calling LLM: ${err}`);
@@ -226,7 +237,7 @@ export const run = async (events: any[]) => {
       if (inferredCategory === 'failed_to_infer_category') {
         postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
           snapInId,
-          `Failed to infer category of review ${reviewID}. Skipping ticket creation.`,
+          `Failed to infer category of review ${url}. Skipping ticket creation.`,
           1
         );
         if (!postResp.success) {
@@ -264,7 +275,7 @@ export const run = async (events: any[]) => {
           `Known Summaries: ${summaryQuery}, query: ${reviewText}\n\n\nSummary: {review}\n\nOutput:`,
           llmQuery,
           {
-            review: reviewTitle ? reviewTitle + '\n' + reviewText : reviewText,
+            review: reviewText ? reviewText : 'No review found',
           }
         );
       } catch (err) {
@@ -298,13 +309,13 @@ export const run = async (events: any[]) => {
 
       if (inferredCategory === 'bug') {
         let llmBugResponse = {};
-        const reviewBugText = `Summary: ${reviewSummary}\n\nReason: ${reviewReason}\n\nBug text: ${review.text}`;
-        const reviewBugTitle = review.title || `Ticket created from Playstore review ${review.url}`;
+        const reviewBugText = `Summary: ${reviewSummary}\n\nReason: ${reviewReason}\n\nBug text: ${text}`;
+        // const reviewBugTitle = review.title || `Ticket created from Playstore review ${review.url}`;
         const systemBugPrompt = `You are an expert at understanding the business impact of a bug. You are given a review provided by a user for the app ${inputs['app_id']}. The output should be a JSON with fields "impact" and "severity". The "impact" field should have a explanation in under 40 words. The "severity" field should be a single number between 0 and 10. \n\nReview: {review}\n\nOutput:`;
         const humanBugPrompt = '';
         try {
           llmSpamResponse = await llmUtil.chatCompletion(systemBugPrompt, humanBugPrompt, {
-            review: reviewBugTitle ? reviewBugTitle + '\n' + reviewBugText : reviewBugText,
+            review: reviewBugText ? reviewBugText : 'No review found',
           });
           console.log(`LLM Response: ${JSON.stringify(llmBugResponse)}`);
         } catch (err) {
@@ -326,9 +337,12 @@ export const run = async (events: any[]) => {
 
         // Create a ticket with title as review title and description as review text.
         const createTicketResp = await apiUtil.createTicket({
-          title: reviewTitle,
+          title: title,
           tags: [{ id: tags[inferredCategory].id }],
-          body: reviewText + '\n\n' + bugImpact + '\n\n Bug severity: ' + bugSeverity.toString(),
+          body:
+            reviewText + '\n\n' + bugImpact + '\n\n Bug severity: ' + bugSeverity.toString() + (imageurl == '')
+              ? ''
+              : '\n\nlinked image ' + imageurl,
           type: publicSDK.WorkType.Ticket,
           owned_by: [inputs['default_owner_id']],
           applies_to_part: inputs['default_part_id'],
@@ -356,8 +370,8 @@ export const run = async (events: any[]) => {
 
       if (inferredCategory === 'feature_request') {
         let llmFeatureResponse = {};
-        const reviewFeatureText = `Summary: ${reviewSummary}\n\nReason: ${reviewReason}\n\nFeature request: ${review.text}`;
-        const reviewFeatureTitle = review.title || `Ticket created from Playstore review ${review.url}`;
+        const reviewFeatureText = `Summary: ${reviewSummary}\n\nReason: ${reviewReason}\n\nFeature request: ${text}`;
+        const reviewFeatureTitle = title;
         const systemFeaturePrompt = `You are an expert at understanding the business impact of a feature request. You are given a review provided by a user for the app ${inputs['app_id']}. The output should be a JSON with fields "impact" and "severity". The "impact" field should have a explanation in under 40 words. The "severity" field should be a single number between 0 and 10. \n\nReview: {review}\n\nOutput:`;
         const humanFeaturePrompt = '';
         try {
@@ -384,9 +398,12 @@ export const run = async (events: any[]) => {
 
         // Create a ticket with title as review title and description as review text.
         const createTicketResp = await apiUtil.createTicket({
-          title: reviewTitle,
+          title: title,
           tags: [{ id: tags[inferredCategory].id }],
-          body: reviewText + '\n\n' + featureImpact + '\n\n Bug severity: ' + featureSeverity.toString(),
+          body:
+            reviewText + '\n\n' + featureImpact + '\n\n Bug severity: ' + featureSeverity.toString() + (imageurl == '')
+              ? ''
+              : '\n\nlinked image ' + imageurl,
           type: publicSDK.WorkType.Ticket,
           owned_by: [inputs['default_owner_id']],
           applies_to_part: inputs['default_part_id'],
@@ -432,15 +449,20 @@ export const run = async (events: any[]) => {
 
         // Create a ticket with title as review title and description as review text.
         const createTicketResp = await apiUtil.createTicket({
-          title: reviewTitle,
+          title: title,
           tags: [{ id: tags[inferredCategory].id }],
           body:
+            'Tweet: ' +
+            text +
             'Review Summary: ' +
             reviewSummary +
             '\n\n Feedback Sentiment: ' +
             feedbackSentiment.toString() +
             '\n\n Sentiment Score: ' +
-            SentimentScore.toString(),
+            SentimentScore.toString() +
+            (imageurl == '')
+              ? ''
+              : '\n\nlinked image ' + imageurl,
           type: publicSDK.WorkType.Ticket,
           owned_by: [inputs['default_owner_id']],
           applies_to_part: inputs['default_part_id'],
