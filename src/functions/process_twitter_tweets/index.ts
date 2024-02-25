@@ -27,7 +27,7 @@ export const run = async (events: any[]) => {
     let commentID: string | undefined;
     if (parameters === 'help') {
       // Send a help message in CLI help format.
-      const helpMessage = `playstore_reviews_process - Fetch tweets from Twitter(X.com) and create tickets in DevRev.\n\nUsage: /process_twitter_tweets <number_of_tweets_to_fetch>\n\n\`number_of_tweets_to_fetch\`: Number of tweets to fetch from Twitter (X.com). Should be a number between 1 and 50. If not specified, it defaults to 10.`;
+      const helpMessage = `twitter_tweets_process - Fetch tweets from Twitter(X.com) and create tickets in DevRev.\n\nUsage: /twitter_tweets_process <number_of_tweets_to_fetch>\n\n\`number_of_tweets_to_fetch\`: Number of tweets to fetch from Twitter (X.com). Should be a number between 1 and 50. If not specified, it defaults to 10.`;
       let postResp = await apiUtil.postTextMessageWithVisibilityTimeout(snapInId, helpMessage, 1);
       if (!postResp.success) {
         console.error(`Error while creating timeline entry: ${postResp.message}`);
@@ -137,7 +137,7 @@ export const run = async (events: any[]) => {
       let llmSpamResponse = {};
       const reviewSpamText = `Ticket created from X tweet ${url}\n\n${text}`;
       // const reviewSpamTitle = review.title || `Ticket created from X tweet ${url}`;
-      const systemSpamPrompt = `You are an expert at Identifying Spam and NSFW reviews among Playstore Reviews. You are given a review provided by a user for the app ${inputs['app_id']}. You have to label the review as spam, nsfw or notspam. The output should be a JSON with fields "category" and "reason". The "category" field should be one of 'spam', 'nsfw' or 'notspam'. The 'reason' field should be a string explaining the reason for the category. \n\nReview: {review}\n\nOutput:`;
+      const systemSpamPrompt = `You are an expert at Identifying Spam and NSFW reviews among tweets in Twitter. You are given a review provided by a user for the app ${inputs['app_id']}. You have to label the review as spam, nsfw or notspam. The output should be a JSON with fields "category" and "reason". The "category" field should be one of 'spam', 'nsfw' or 'notspam'. The 'reason' field should be a string explaining the reason for the category. \n\nReview: {review}\n\nOutput:`;
       const humanSpamPrompt = '';
       try {
         llmSpamResponse = await llmUtil2.chatCompletion(systemSpamPrompt, humanSpamPrompt, {
@@ -153,51 +153,20 @@ export const run = async (events: any[]) => {
       }
       if (inferredspam === 'spam') {
         spamCounter++;
-        postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
-          snapInId,
-          `Review is spam. Skipping ticket creation.`,
-          1
-        );
-        if (!postResp.success) {
-          console.error(`Error while creating timeline entry: ${postResp.message}`);
-          continue;
-        }
+        console.log(`Review is spam. Skipping ticket creation.`);
         continue;
       } else if (inferredspam === 'nsfw') {
         nsfwCounter++;
-        postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
-          snapInId,
-          `Review is nsfw. Skipping ticket creation.`,
-          1
-        );
-        if (!postResp.success) {
-          console.error(`Error while creating timeline entry: ${postResp.message}`);
-          continue;
-        }
+        console.log(`Review is NSFW. Skipping ticket creation.`);
         continue;
       }
-      postResp = await apiUtil.postTextMessageWithVisibilityTimeout(snapInId, `Review is not spam.`, 1);
-      if (!postResp.success) {
-        console.error(`Error while creating timeline entry: ${postResp.message}`);
-        continue;
-      }
-
       // TODO: Identify computer generated reviews
       // let cgResponse: number = 0;
       try {
         const cgResponse: number = await apiUtil.predictText(text);
         if (cgResponse > 0.8) {
           cgCounter++;
-          // TODO: Create a ticket
-          postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
-            snapInId,
-            `Review is computer generated. Skipping ticket creation.`,
-            1
-          );
-          if (!postResp.success) {
-            console.error(`Error while creating timeline entry: ${postResp.message}`);
-            continue;
-          }
+          console.log(`Review is computer generated. Skipping ticket creation.`);
           continue;
         }
       } catch (err) {
@@ -207,7 +176,7 @@ export const run = async (events: any[]) => {
       const reviewText = `Ticket created from Twitter tweet review ${url}\n\n${text}`;
       // const reviewTitle = review.title || `Ticket created from Playstore review ${url}`;
       // const reviewID = review.id;
-      const systemPrompt = `You are an expert at labelling a given Google Play Store Review as bug, feature_request, question or feedback. You are given a review provided by a user for the app ${inputs['app_id']}. You have to label the review as bug, feature_request, question or feedback. The output should be a JSON with fields "category", "summary" and "reason". The "category" field should be one of "bug", "feature_request", "question" or "feedback". The "summary" field should be a string summarizing the reviewin 20 words. The "reason" field should be a string explaining the reason for the category. \n\nReview: {review}\n\nOutput:`;
+      const systemPrompt = `You are an expert at labelling a given Tweet from twitter as bug, feature_request, question or feedback. You are given a review provided by a user for the app ${inputs['app_id']}. You have to label the review as bug, feature_request, question or feedback. The output should be a JSON with fields "category", "summary" and "reason". The "category" field should be one of "bug", "feature_request", "question" or "feedback". The "summary" field should be a string summarizing the reviewin 20 words. The "reason" field should be a string explaining the reason for the category. \n\nReview: {review}\n\nOutput:`;
       const humanPrompt = ``;
 
       let llmResponse = {};
@@ -258,7 +227,7 @@ export const run = async (events: any[]) => {
       if (inferredCategory === 'failed_to_infer_category') {
         postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
           snapInId,
-          `Failed to infer category of review ${url}. Skipping ticket creation.`,
+          `The tweet doesn't fit in any of the categories. ${url}. Skipping ticket creation.`,
           1
         );
         if (!postResp.success) {
@@ -511,7 +480,9 @@ export const run = async (events: any[]) => {
     if (feedbackCounter > 0) {
       postResp = await apiUtil.postTextMessage(
         snapInId,
-        `Overall Customer Sentiment Score: ${SentimentTotal / feedbackCounter}`
+        `Overall Customer Sentiment Score: ${
+          SentimentTotal / feedbackCounter
+        } \n (Negative = -1, Neutral = 0, Positive = 1)`
       );
       if (!postResp.success) {
         console.error(`Error while creating timeline entry: ${postResp.message}`);
@@ -543,10 +514,7 @@ export const run = async (events: any[]) => {
         }
       }
     } else {
-      const postFeatureResp = await apiUtil.postTextMessage(snapInId, 'No feature requests found');
-      if (!postFeatureResp.success) {
-        console.error(`Error while creating timeline entry: ${postFeatureResp.message}`);
-      }
+      console.log('No feature requests found');
     }
 
     if (bugList.length > 0) {
@@ -569,10 +537,7 @@ export const run = async (events: any[]) => {
         }
       }
     } else {
-      const postBugResp = await apiUtil.postTextMessage(snapInId, 'No bugs found');
-      if (!postBugResp.success) {
-        console.error(`Error while creating timeline entry: ${postBugResp.message}`);
-      }
+      console.log('No bug found');
     }
 
     if (feedbackList.length > 0) {
@@ -595,10 +560,7 @@ export const run = async (events: any[]) => {
         }
       }
     } else {
-      const postFeedbackResp = await apiUtil.postTextMessage(snapInId, 'No feedback found');
-      if (!postFeedbackResp.success) {
-        console.error(`Error while creating timeline entry: ${postFeedbackResp.message}`);
-      }
+      console.log('No feedback found');
     }
 
     // TODO: Identifying customer knowledge gaps only if there are questions.
@@ -623,10 +585,7 @@ export const run = async (events: any[]) => {
         }
       }
     } else {
-      const postSentimentResp = await apiUtil.postTextMessage(snapInId, 'No questions found');
-      if (!postSentimentResp.success) {
-        console.error(`Error while creating timeline entry: ${postSentimentResp.message}`);
-      }
+      console.log('No questions found');
     }
 
     // postResp the counters
@@ -636,7 +595,7 @@ export const run = async (events: any[]) => {
     );
     postResp = await apiUtil.postTextMessage(
       snapInId,
-      `Total feedback: ${feedbackCounter} \n Total bugs: ${bugCounter} \n Total feature Requests: ${featureRequestCounter} \n Total questions: ${questionCounter} \n Total duplicates: ${duplicateCounter}`
+      `Total feedback: ${feedbackCounter} \n Total bugs: ${bugCounter} \n Total feature Requests: ${featureRequestCounter} \n Total questions: ${questionCounter}`
     );
   }
 };

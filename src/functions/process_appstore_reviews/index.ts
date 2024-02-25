@@ -166,6 +166,7 @@ export const run = async (events: any[]) => {
           cgCounter++;
           // TODO: Create a ticket
           console.log(`Review is computer generated. Skipping ticket creation.`);
+          continue;
         }
       } catch (err) {
         console.log(err);
