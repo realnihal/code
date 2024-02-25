@@ -107,6 +107,7 @@ export const run = async (events: any[]) => {
     let feedbackCounter = 0;
     let featureRequestCounter = 0;
     let bugCounter = 0;
+    let cgCounter = 0;
     let duplicateCounter = 0;
     let questionCounter = 0;
     let SentimentTotal = 0;
@@ -179,6 +180,26 @@ export const run = async (events: any[]) => {
       }
 
       // TODO: Identify computer generated reviews
+      // let cgResponse: number = 0;
+      try {
+        const cgResponse: number = await apiUtil.predictText(text);
+        if (cgResponse > 0.8) {
+          cgCounter++;
+          // TODO: Create a ticket
+          postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
+            snapInId,
+            `Review is computer generated. Skipping ticket creation.`,
+            1
+          );
+          if (!postResp.success) {
+            console.error(`Error while creating timeline entry: ${postResp.message}`);
+            continue;
+          }
+          continue;
+        }
+      } catch (err) {
+        console.log(err);
+      }
 
       const reviewText = `Ticket created from App review ${url}\n\n${text}`;
       const reviewTitle = title || `Ticket created from Appstore review ${url}`;
@@ -595,7 +616,10 @@ export const run = async (events: any[]) => {
     }
 
     // postResp the counters
-    postResp = await apiUtil.postTextMessage(snapInId, `Spam reviews: ${spamCounter}\nNSFW reviews: ${nsfwCounter}`);
+    postResp = await apiUtil.postTextMessage(
+      snapInId,
+      `Spam reviews: ${spamCounter}\nNSFW reviews: ${nsfwCounter}\nDuplicate reviews: ${duplicateCounter}\nAI reviews detected: ${cgCounter}`
+    );
     postResp = await apiUtil.postTextMessage(
       snapInId,
       `Total feedback: ${feedbackCounter} \n Total bugs: ${bugCounter} \n Total feature Requests: ${featureRequestCounter} \n Total questions: ${questionCounter} \n Total duplicates: ${duplicateCounter}`

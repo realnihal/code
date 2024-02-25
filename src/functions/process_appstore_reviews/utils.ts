@@ -152,4 +152,28 @@ export class ApiUtils {
       console.error(error);
     }
   }
+  async predictText(document: string): Promise<number> {
+    const url: string = 'https://api.gptzero.me/v2/predict/text';
+    const options: RequestInit = {
+      method: 'POST',
+      headers: {
+        'x-api-key': '',
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ document, version: '2024-01-09' }),
+    };
+
+    try {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      console.log(data);
+      let jsondata = JSON.parse(data);
+      return jsondata.documents[0].class_probabilities.ai;
+    } catch (error) {
+      console.error(error);
+      // Return a default value or throw an error based on your requirement
+      return -1; // Default value indicating error
+    }
+  }
 }
