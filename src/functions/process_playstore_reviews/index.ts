@@ -37,7 +37,7 @@ export const run = async (events: any[]) => {
     }
     let postResp: HTTPResponse = await apiUtil.postTextMessageWithVisibilityTimeout(
       snapInId,
-      'Fetching reviews from Playstore',
+      'Fetching reviews from Google Playstore ...',
       1
     );
     if (!postResp.success) {
@@ -48,7 +48,7 @@ export const run = async (events: any[]) => {
       // Default to 10 reviews.
       parameters = '10';
     }
-    postResp = await apiUtil.postTextMessageWithVisibilityTimeout(snapInId, `Helloooweoiwoeiwoie`, 1);
+    // postResp = await apiUtil.postTextMessageWithVisibilityTimeout(snapInId, `Helloooweoiwoeiwoie`, 1);
     try {
       numReviews = parseInt(parameters);
 
@@ -112,15 +112,7 @@ export const run = async (events: any[]) => {
     // For each review, create a ticket in DevRev. -----> LOOP START
     for (const review of reviews) {
       // Post a progress message saying creating ticket for review with review URL posted.
-      postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
-        snapInId,
-        `Creating ticket for review: ${review.url}`,
-        1
-      );
-      if (!postResp.success) {
-        console.error(`Error while creating timeline entry: ${postResp.message}`);
-        continue;
-      }
+      console.log(`Creating ticket for review: ${review.url}`);
 
       // TODO: SPAM FILTERING
       let llmSpamResponse = {};
@@ -142,32 +134,11 @@ export const run = async (events: any[]) => {
       }
       if (inferredspam === 'spam') {
         spamCounter++;
-        postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
-          snapInId,
-          `Review is spam. Skipping ticket creation.`,
-          1
-        );
-        if (!postResp.success) {
-          console.error(`Error while creating timeline entry: ${postResp.message}`);
-          continue;
-        }
+        console.log(`Review is Spam. Skipping ticket creation.`);
         continue;
       } else if (inferredspam === 'nsfw') {
         nsfwCounter++;
-        postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
-          snapInId,
-          `Review is nsfw. Skipping ticket creation.`,
-          1
-        );
-        if (!postResp.success) {
-          console.error(`Error while creating timeline entry: ${postResp.message}`);
-          continue;
-        }
-        continue;
-      }
-      postResp = await apiUtil.postTextMessageWithVisibilityTimeout(snapInId, `Review is not spam.`, 1);
-      if (!postResp.success) {
-        console.error(`Error while creating timeline entry: ${postResp.message}`);
+        console.log(`Review is nsfw. Skipping ticket creation.`);
         continue;
       }
 
@@ -177,16 +148,7 @@ export const run = async (events: any[]) => {
         const cgResponse: number = await apiUtil.predictText(review.text);
         if (cgResponse > 0.8) {
           cgCounter++;
-          // TODO: Create a ticket
-          postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
-            snapInId,
-            `Review is computer generated. Skipping ticket creation.`,
-            1
-          );
-          if (!postResp.success) {
-            console.error(`Error while creating timeline entry: ${postResp.message}`);
-            continue;
-          }
+          console.log(`Review is computer generated. Skipping ticket creation.`);
           continue;
         }
       } catch (err) {
@@ -247,7 +209,7 @@ export const run = async (events: any[]) => {
       if (inferredCategory === 'failed_to_infer_category') {
         postResp = await apiUtil.postTextMessageWithVisibilityTimeout(
           snapInId,
-          `Failed to infer category of review ${reviewID}. Skipping ticket creation.`,
+          `Review doesn't fit into any category for ${reviewID}. Skipping ticket creation.`,
           1
         );
         if (!postResp.success) {
@@ -489,7 +451,9 @@ export const run = async (events: any[]) => {
     if (feedbackCounter > 0) {
       postResp = await apiUtil.postTextMessage(
         snapInId,
-        `Overall Customer Sentiment Score: ${SentimentTotal / feedbackCounter}`
+        `Overall Customer Sentiment Score: ${
+          SentimentTotal / feedbackCounter
+        } \n-ve indicates negative feedback +ve is positive feedback`
       );
       if (!postResp.success) {
         console.error(`Error while creating timeline entry: ${postResp.message}`);
@@ -521,10 +485,7 @@ export const run = async (events: any[]) => {
         }
       }
     } else {
-      const postFeatureResp = await apiUtil.postTextMessage(snapInId, 'No feature requests found');
-      if (!postFeatureResp.success) {
-        console.error(`Error while creating timeline entry: ${postFeatureResp.message}`);
-      }
+      console.log('No feature request found');
     }
 
     if (bugList.length > 0) {
@@ -547,10 +508,7 @@ export const run = async (events: any[]) => {
         }
       }
     } else {
-      const postBugResp = await apiUtil.postTextMessage(snapInId, 'No bugs found');
-      if (!postBugResp.success) {
-        console.error(`Error while creating timeline entry: ${postBugResp.message}`);
-      }
+      console.log('No bugs found');
     }
 
     if (feedbackList.length > 0) {
@@ -573,10 +531,7 @@ export const run = async (events: any[]) => {
         }
       }
     } else {
-      const postFeedbackResp = await apiUtil.postTextMessage(snapInId, 'No feedback found');
-      if (!postFeedbackResp.success) {
-        console.error(`Error while creating timeline entry: ${postFeedbackResp.message}`);
-      }
+      console.log('No feedback found');
     }
 
     // TODO: Identifying customer knowledge gaps only if there are questions.
@@ -601,10 +556,7 @@ export const run = async (events: any[]) => {
         }
       }
     } else {
-      const postSentimentResp = await apiUtil.postTextMessage(snapInId, 'No questions found');
-      if (!postSentimentResp.success) {
-        console.error(`Error while creating timeline entry: ${postSentimentResp.message}`);
-      }
+      console.log('No questions found');
     }
 
     // postResp the counters
@@ -614,7 +566,7 @@ export const run = async (events: any[]) => {
     );
     postResp = await apiUtil.postTextMessage(
       snapInId,
-      `Total feedback: ${feedbackCounter} \n Total bugs: ${bugCounter} \n Total feature Requests: ${featureRequestCounter} \n Total questions: ${questionCounter} \n Total duplicates: ${duplicateCounter}`
+      `Total feedback: ${feedbackCounter} \n Total bugs: ${bugCounter} \n Total feature Requests: ${featureRequestCounter} \n Total questions: ${questionCounter}`
     );
   }
 };
